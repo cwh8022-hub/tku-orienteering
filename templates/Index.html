@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>淡江定向挑戰｜AI 影像壓縮上傳版</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+<style>
+  :root { --accent:#f97316; --ok:#22c55e; --ink:#0f172a; --muted:#64748b; --card:#ffffff; --edge:#e5e7eb; --bg:#fff7ed; }
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,sans-serif;scroll-behavior: smooth;}
+  .wrap{max-width:800px;margin:0 auto;padding:20px}
+  .card{background:var(--card);border:1px solid var(--edge);border-radius:16px;padding:20px;margin-bottom:20px;box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);}
+  .title{font-weight:800;font-size:20px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .btn{cursor:pointer;border-radius:12px;border:1px solid var(--edge);background:#fff;padding:12px 16px;font-weight:600;transition:all 0.2s}
+  .btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .btn:disabled{opacity:0.5;cursor:not-allowed}
+  .grid5{display:grid;grid-template-columns:repeat(5, 1fr);gap:10px}
+  .pill{height:60px;border-radius:14px;background:var(--accent);color:#fff;font-weight:800;font-size:18px;display:flex;align-items:center;justify-content:center;border:0;cursor:pointer;}
+  .pill.done{background:var(--ok)}
+  .mask{position:fixed;inset:0;background:rgba(0,0,0,0.6);display:none;align-items:center;justify-content:center;z-index:100;backdrop-filter: blur(4px);}
+  .modal{width:min(500px, 90vw);background:#fff;border-radius:20px;padding:24px;}
+  .img-preview{width:100%;max-height:280px;object-fit:contain;border-radius:12px;margin:15px 0;border:1px solid var(--edge)}
+  .bar-bg{height:10px;background:#e2e8f0;border-radius:10px;overflow:hidden;margin:10px 0}
+  .bar-inner{height:100%;background:var(--accent);width:0%;transition:width 0.5s}
+  #statusBox { margin:10px 0; font-size:14px; min-height:20px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="card" style="display:flex; align-items:center; justify-content:space-between;">
+    <div>
+      <h1 style="margin:0; font-size:22px;">淡江定向挑戰 <span style="color:var(--accent)">AI辨識</span></h1>
+      <div style="font-size:14px; color:var(--muted);">學號：<span id="sidVal">未設定</span></div>
+    </div>
+    <button onclick="promptSID()" class="btn">設定學號</button>
+  </header>
+
+  <section class="card">
+    <div class="title">🏆 闖關進度</div>
+    <div class="bar-bg"><div id="progressBar" class="bar-inner"></div></div>
+    <div id="progressText" style="font-size:13px; color:var(--muted);">已完成 0 / 25</div>
+  </section>
+
+  <section class="card">
+    <div class="title">📍 校園地圖</div>
+    <img src="https://raw.githubusercontent.com/cwh8022-eng/Orienteering/main/assets/tku_map.jpg" style="width:100%; border-radius:12px;">
+  </section>
+
+  <section class="card">
+    <div class="title">🚩 關卡列表</div>
+    <div id="poiList" class="grid5"></div>
+  </section>
+</div>
+
+<div id="taskModal" class="mask">
+  <div class="modal">
+    <h3 id="taskTitle">關卡 #</h3>
+    <input id="imageInput" type="file" accept="image/*;capture=camera" style="width:100%; margin:15px 0;">
+    <img id="previewImg" class="img-preview" style="display:none;">
+    <div id="statusBox"></div>
+    <div style="display:flex; gap:10px;">
+      <button id="uploadBtn" class="btn btn-primary" style="flex:2" disabled>驗證並上傳</button>
+      <button onclick="toggleTask(false)" class="btn" style="flex:1">取消</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOTAL_POINTS = 25;
+const MODEL_URL = "https://teachablemachine.withgoogle.com/models/sSZsfTuFx/"; 
+const POINTS = Array.from({length: TOTAL_POINTS}, (_, i) => ({ id: i + 1, label: `P${i + 1}` }));
+
+let currentPoint = null, model;
+
+async function init() {
+  renderPOIList();
+  updateUI();
+  try {
+    model = await tmImage.load(MODEL_URL + "model.json", MODEL_URL + "metadata.json");
+    console.log("Model Loaded");
+  } catch(e) { console.error("Model Error", e); }
+}
+
+function promptSID() {
+  const sid = prompt("請輸入學號：", localStorage.getItem("tku_sid") || "");
+  if (sid) { localStorage.setItem("tku_sid", sid); updateUI(); }
+}
+
+function updateUI() {
+  const sid = localStorage.getItem("tku_sid") || "";
+  document.getElementById("sidVal").textContent = sid || "未設定";
+  const done = JSON.parse(localStorage.getItem("tku_progress") || "[]");
+  document.getElementById("progressBar").style.width = (done.length / TOTAL_POINTS * 100) + "%";
+  document.getElementById("progressText").textContent = `已完成 ${done.length} / ${TOTAL_POINTS}`;
+}
+
+function renderPOIList() {
+  const box = document.getElementById("poiList"); box.innerHTML = "";
+  const done = new Set(JSON.parse(localStorage.getItem("tku_progress") || "[]"));
+  POINTS.forEach(p => {
+    const btn = document.createElement("div");
+    btn.className = "pill" + (done.has(p.id) ? " done" : "");
+    btn.textContent = p.id;
+    btn.onclick = () => { currentPoint = p; document.getElementById("taskTitle").textContent=`關卡 #${p.id}`; toggleTask(true); };
+    box.appendChild(btn);
+  });
+}
+
+function toggleTask(show) {
+  document.getElementById("taskModal").style.display = show ? "flex" : "none";
+  if(!show) { 
+    document.getElementById("imageInput").value = ""; 
+    document.getElementById("previewImg").style.display="none"; 
+    document.getElementById("uploadBtn").disabled=true;
+  }
+}
+
+document.getElementById("imageInput").onchange = (e) => {
+  const file = e.target.files[0];
+  if(file) {
+    document.getElementById("previewImg").src = URL.createObjectURL(file);
+    document.getElementById("previewImg").style.display = "block";
+    document.getElementById("uploadBtn").disabled = false;
+  }
+};
+
+/* --- 核心：壓縮並上傳 --- */
+async function runWorkflow() {
+  const status = document.getElementById("statusBox");
+  const sid = localStorage.getItem("tku_sid");
+  if(!sid) return promptSID();
+
+  status.style.color = "var(--accent)";
+  status.textContent = "🔍 AI 辨識中...";
+  document.getElementById("uploadBtn").disabled = true;
+
+  try {
+    const prediction = await model.predict(document.getElementById("previewImg"));
+    const top = prediction.sort((a,b)=>b.probability-a.probability)[0];
+
+    if(top.className !== currentPoint.label || top.probability < 0.7) {
+      status.style.color = "red";
+      status.textContent = `❌ 辨識不符 (${(top.probability*100).toFixed(0)}%)，請重拍 ${currentPoint.label}`;
+      document.getElementById("uploadBtn").disabled = false;
+      return;
+    }
+
+    status.textContent = "⚡ 正在壓縮圖片並同步雲端...";
+
+    // 使用 Canvas 進行圖片壓縮
+    const img = document.getElementById("previewImg");
+    const canvas = document.createElement('canvas');
+    const MAX_WIDTH = 1024; // 限制最大寬度
+    let width = img.naturalWidth, height = img.naturalHeight;
+    if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, width, height);
+
+    // 轉成較小的 JPEG (品質 0.7)
+    const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+
+    const resp = await fetch('/saveUpload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sid: sid, pointId: currentPoint.id, dataURL: compressedBase64 })
+    });
+
+    const res = await resp.json();
+    if(res.ok) {
+      alert("過關成功！");
+      let done = JSON.parse(localStorage.getItem("tku_progress") || "[]");
+      if(!done.includes(currentPoint.id)) done.push(currentPoint.id);
+      localStorage.setItem("tku_progress", JSON.stringify(done));
+      renderPOIList(); updateUI(); toggleTask(false);
+    } else {
+      throw new Error(res.error);
+    }
+  } catch(e) {
+    status.style.color = "red";
+    status.textContent = "⚠️ 錯誤: " + e.message;
+    document.getElementById("uploadBtn").disabled = false;
+  }
+}
+
+document.getElementById("uploadBtn").onclick = runWorkflow;
+init();
+</script>
+</body>
+</html>
