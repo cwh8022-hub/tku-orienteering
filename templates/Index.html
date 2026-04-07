@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>淡江定向挑戰｜AI 影像壓縮上傳版</title>
+<title>淡江定向挑戰｜AI 辨識對照版</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
@@ -26,6 +26,8 @@
   .bar-bg{height:10px;background:#e2e8f0;border-radius:10px;overflow:hidden;margin:10px 0}
   .bar-inner{height:100%;background:var(--accent);width:0%;transition:width 0.5s}
   #statusBox { margin:10px 0; font-size:14px; min-height:20px; }
+  .targets-img { width:100%; border-radius:12px; border: 2px solid var(--edge); margin-top: 8px; transition: transform 0.3s; }
+  .targets-img:active { transform: scale(1.05); } /* 手機點擊可微放大的效果 */
 </style>
 </head>
 <body>
@@ -47,7 +49,13 @@
 
   <section class="card">
     <div class="title">📍 校園地圖</div>
-    <img src="static/tku_map.jpg" style="width:100%; border-radius:12px;">
+    <img src="{{ url_for('static', filename='tku_map.jpg') }}" style="width:100%; border-radius:12px;">
+  </section>
+
+  <section class="card">
+    <div class="title">📸 25個闖關點實景對照</div>
+    <p style="font-size:13px; color:var(--muted); margin: -5px 0 10px 0;">點擊圖片可對照目標物位置</p>
+    <img src="{{ url_for('static', filename='tku_targets.jpg') }}" class="targets-img" alt="闖關點對照圖">
   </section>
 
   <section class="card">
@@ -116,6 +124,7 @@ function toggleTask(show) {
     document.getElementById("imageInput").value = ""; 
     document.getElementById("previewImg").style.display="none"; 
     document.getElementById("uploadBtn").disabled=true;
+    document.getElementById("statusBox").textContent = "";
   }
 }
 
@@ -128,7 +137,6 @@ document.getElementById("imageInput").onchange = (e) => {
   }
 };
 
-/* --- 核心：壓縮並上傳 --- */
 async function runWorkflow() {
   const status = document.getElementById("statusBox");
   const sid = localStorage.getItem("tku_sid");
@@ -151,17 +159,15 @@ async function runWorkflow() {
 
     status.textContent = "⚡ 正在壓縮圖片並同步雲端...";
 
-    // 使用 Canvas 進行圖片壓縮
     const img = document.getElementById("previewImg");
     const canvas = document.createElement('canvas');
-    const MAX_WIDTH = 1024; // 限制最大寬度
+    const MAX_WIDTH = 1024; 
     let width = img.naturalWidth, height = img.naturalHeight;
     if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
     canvas.width = width; canvas.height = height;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0, width, height);
 
-    // 轉成較小的 JPEG (品質 0.7)
     const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
 
     const resp = await fetch('/saveUpload', {
